@@ -1,0 +1,13 @@
+../LZD_6.sv
+../LZD_2.sv
+../sim/define.sv
+../sim/tb.sv
+../LZD_30.sv
+../LZD.sv
+../FPMultiply.sv
+../LZD_Wrapper.sv
+../LZD_14.sv
+./tb.sv
+./dump.v
+./clk_gen.v
+./rst_gen.v

@@ -64,12 +64,12 @@ class LZD_Wrapper(inputWidth:Int) extends Module {
 	val lzdModule = Module(new LZD(exp2Width))
 	lzdModule.io.data := Cat(0.U((exp2Width - inputWidth).W), io.data)
 	io.allZero := ~lzdModule.io.data_o
-	io.zcnt := lzdModule.io.zcnt
+	io.zcnt := lzdModule.io.zcnt - ((exp2Width - inputWidth).U)
 }
 
 object LZD extends App {
   ChiselStage.emitSystemVerilogFile(
-    new LZD_Wrapper(4),
+    new LZD_Wrapper(5),
     firtoolOpts = Array("-disable-all-randomization", "-strip-debug-info", "-default-layer-specialization=enable")
   )
 }
