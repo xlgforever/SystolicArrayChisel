@@ -2,8 +2,10 @@
 ../LZD_2.sv
 ../sim/define.sv
 ../sim/tb.sv
+../fix2fp.sv
 ../LZD_30.sv
 ../LZD.sv
+../normal_clip.sv
 ../FPMultiply.sv
 ../LZD_Wrapper.sv
 ../LZD_14.sv
