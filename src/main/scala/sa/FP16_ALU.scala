@@ -371,16 +371,122 @@ class fp_ma(cfg:FPConfig) extends Module {
     val (sign_b, exp_b, frac_b) = FPHelpers.unpack(io.b, cfg)
     val (sign_c, exp_c, frac_c) = FPHelpers.unpack(io.c, cfg)
     
-    val fpNumArray = Seq(io.a.asTypeOf(new fpNumber(cfg)),
-                             io.b.asTypeOf(new fpNumber(cfg)),
-                             io.c.asTypeOf(new fpNumber(cfg)))
+    val fp_a = io.a.asTypeOf(new fpNumber(cfg))
+    val fp_b = io.b.asTypeOf(new fpNumber(cfg))
+    val fp_c = io.c.asTypeOf(new fpNumber(cfg))
+    val fpNumArray = Seq(fp_a, fp_b, fp_c)
     // special encodings
+    val specialSignalsa = FPHelpers.specialEncodingChecks2(cfg, exp_a, frac_a, true.B)
+    val specialSignalsb = FPHelpers.specialEncodingChecks2(cfg, exp_b, frac_b, true.B)
+    val specialSignalsc = FPHelpers.specialEncodingChecks2(cfg, exp_c, frac_c, true.B)
     val specialSignalsArray = Seq(
-      FPHelpers.specialEncodingChecks2(cfg, exp_a, frac_a, true.B),
-      FPHelpers.specialEncodingChecks2(cfg, exp_b, frac_b, true.B),
-      FPHelpers.specialEncodingChecks2(cfg, exp_c, frac_c, true.B)
+      specialSignalsa,
+      specialSignalsb,
+      specialSignalsc
     )
-}
+
+    val (isSpecial, specialResult) = FPHelpers.specialResultGen2(cfg, 2, fpNumArray, specialSignalsArray)
+    
+
+    // stage 1
+    val sign_ab_s1 = RegNext(sign_a ^ sign_b)
+    val sign_c_s1 = RegNext(sign_c)
+    val exp_a_s1 = RegNext(exp_a + specialSignalsa.isSubnormal.asUInt)
+    val exp_b_s1 = RegNext(exp_b + specialSignalsb.isSubnormal.asUInt)
+    val exp_c_s1 = RegNext(exp_c + specialSignalsc.isSubnormal.asUInt)
+    val frac_a_s1 = RegNext(Mux(specialSignalsa.isSubnormal, Cat(0.U(1.W), frac_a), Cat(1.U(1.W), frac_a)))
+    val frac_b_s1 = RegNext(Mux(specialSignalsb.isSubnormal, Cat(0.U(1.W), frac_b), Cat(1.U(1.W), frac_b)))
+    val frac_c_s1 = RegNext(Mux(specialSignalsc.isSubnormal, Cat(0.U(1.W), frac_c), Cat(1.U(1.W), frac_c)))
+
+    // stage 2
+    val expAdd_s2 = RegNext(exp_a_s1 +& exp_b_s1)
+    val fracMul_s2 = RegNext(frac_a_s1 * frac_b_s1)
+    val exp_c_s2 = RegNext(exp_c_s1)
+    val frac_c_s2 = RegNext(frac_c_s1)
+    val sign_ab_s2 = RegNext(sign_ab_s1)
+    val sign_c_s2 = RegNext(sign_c_s1)
+
+    // compare the exp
+    val exp_compare = expAdd_s2 >= (exp_c_s2 +& cfg.bias.U)
+    val exp_same = expAdd_s2 === (exp_c_s2 +& cfg.bias.U)
+    val exp_sub = Mux(exp_same, 0.U, Mux(exp_compare, expAdd_s2 -& (exp_c_s2 +& cfg.bias.U), (exp_c_s2 +& cfg.bias.U) -& expAdd_s2))(cfg.expBits+1-1,0)
+    
+    // stage 3
+    val sign0_s3 = Reg(UInt(1.W))
+    val sign1_s3 = Reg(UInt(1.W))
+    val exp0_s3 = Reg(UInt((cfg.expBits+1).W))
+    val exp1_s3 = Reg(UInt((cfg.expBits+1).W))
+    val frac0_s3 = Reg(UInt((cfg.sigBits*2).W))
+    val frac1_s3 = Reg(UInt((cfg.sigBits*2).W))
+
+    when(exp_compare){
+      sign0_s3 := sign_ab_s2
+      sign1_s3 := sign_c_s2
+      exp0_s3 := expAdd_s2 - cfg.bias.U
+      exp1_s3 := exp_c_s2
+      frac0_s3 := fracMul_s2
+      frac1_s3 := Cat(0.U(1.W), frac_c_s2, 0.U(cfg.fracBits.W))
+    } .otherwise{
+      sign0_s3 := sign_c_s2
+      sign1_s3 := sign_ab_s2
+      exp0_s3 := exp_c_s2
+      exp1_s3 := expAdd_s2 - cfg.bias.U
+      frac0_s3 := Cat(0.U(1.W), frac_c_s2, 0.U(cfg.fracBits.W))
+      frac1_s3 := fracMul_s2
+    }
+    val exp_sub_s3 = RegNext(exp_sub)
+
+    // stage 4
+    val frac1_shifted_round = Wire(UInt((cfg.sigBits*2*2).W))
+    val frac1_tmp = Wire(UInt((cfg.sigBits*2+1).W)) // 多1bit，用于保留移掉的位的舍入
+    
+    when(exp_sub_s3 >= (cfg.sigBits*2).U){
+      frac1_shifted_round := frac1_s3.orR // 如果移位数大于等于尾数位宽，则表示被移位的数值全部移出，需要对移出的部分进行舍入
+    } .otherwise{ // 如果移位数小于尾数位宽，就正常右移
+      frac1_shifted_round := Cat(frac1_s3, 0.U((cfg.sigBits*2).W)) >> exp_sub_s3
+    }
+    frac1_tmp := Cat(frac1_shifted_round(cfg.sigBits*2*2-1, cfg.sigBits*2), frac1_shifted_round(cfg.sigBits*2-1,0).orR) // 取高cfg.sigBits*2位作为尾数，低位进行或运算作为舍入位
+
+    val sign0_s4 = RegNext(sign0_s3)
+    val sign1_s4 = RegNext(sign1_s3)
+    val exp0_s4 = RegNext(exp0_s3)
+    val exp1_s4 = RegNext(exp1_s3)
+    val frac0_s4 = RegNext( Cat( frac0_s3, 0.U(1.W) ) )
+    val frac1_s4 = RegNext(frac1_tmp)
+
+    // stage 5
+    val exp_s5 = RegNext(exp0_s4)
+    val sign_s5 = Reg(UInt(1.W))
+    val frac_s5 = Reg(UInt((cfg.sigBits*2+2).W))
+    // 如果相加的两个数的符号位相同
+    when(sign0_s4 === sign1_s4){
+      sign_s5 := sign0_s4
+      frac_s5 := frac0_s4 +& frac1_s4
+    } .elsewhen(!sign0_s4.asBool && sign1_s4.asBool){ // 较大的数的符号位sign0为正，sign1为负
+      when(frac0_s4 >= frac1_s4){ // 如果 正数的尾数 >= 负数的尾数
+        frac_s5 := frac0_s4 -& frac1_s4
+        sign_s5 := 0.U
+      } .otherwise{ // 如果 负数的尾数 > 正数的尾数
+        frac_s5 := frac1_s4 -& frac0_s4
+        sign_s5 := 1.U
+      }
+    } .otherwise{ // 较大的数的符号位sign0为负，sign1为正
+      when(frac1_s4 >= frac0_s4){ // 如果 正数的尾数 >= 负数的尾数
+        frac_s5 := frac1_s4 -& frac0_s4
+        sign_s5 := 0.U
+      } .otherwise{ // 如果 正数的尾数 < 负数的尾数
+        frac_s5 := frac0_s4 -& frac1_s4
+      }
+    }
+
+    val sign_s8 = ShiftRegister(sign_s5, 3)
+    val valid_s5 = ShiftRegister(io.valid_in, 5)
+    val isSpecial_s8 = ShiftRegister(isSpecial, 8)
+    val specialResult_s8 = ShiftRegister(specialResult, 8)
+
+    // stage 6 ~ stage 9
+    val fix2fp = Module(new fix2fp(cfg, cfg.sigBits*2+2, cfg.fracBits*2, 1))
+} 
 
 object FPMultiply extends App {
   val cfg = FPConfig(5, 10)
