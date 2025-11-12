@@ -196,7 +196,7 @@ class normal_clip(cfg:FPConfig, fracWidth:Int) extends Module {
   // 1. 当exp_all不全为0时，说明不是subnomal，此时frac_all需要左移1bit来去掉隐藏的1；如果exp_all是全0,则frac_all不需要左移，因为没有隐藏的1；
   val final_frac = Wire(UInt((cfg.sigBits * 2 + 1).W))
   final_frac := Mux(io.exp_all.orR, io.frac_all << 1.U, io.frac_all)
-  // 2. 当包含整数部分的frac_all不为全0时，指数部分不变；档次包含整数部分的frac_all全为0时，指数部分也要为0，表示结果为0
+  // 2. 当包含整数部分的frac_all不为全0时，指数部分不变；当包含整数部分的frac_all全为0时，指数部分也要为0，表示结果为0
   val final_exp = Mux(io.frac_all.orR, io.exp_all, 0.U)
   dontTouch(final_exp)
   // 3. 预处理，在本阶段，指数部分不用动，尾数部分位宽为cfg.fracBits+2位，其中低两bit用于舍入，判断舍掉的部分与0.5的关系
@@ -219,14 +219,14 @@ class normal_clip(cfg:FPConfig, fracWidth:Int) extends Module {
   dontTouch(final_exp_wire)
   val final_frac_wire = Mux(overflow, 0.U, result_mult_frac)
   dontTouch(final_frac_wire)
-  val fp_c = Mux(io.is_special, io.special_result, Cat(io.sign_flag, final_exp_wire, final_frac_wire))
+  val fp_c = Mux(io.is_special, io.special_result, Cat(io.sign_flag, final_exp_wire, final_frac_wire)) // io相关信号在外部进行了时钟对齐
 
   io.fp_c := RegNext(fp_c)
 }
 
 
 class fix2fp(cfg:FPConfig, dinWidth:Int=24, fracWidth:Int=21, addFunc:Int=0) extends Module {
-  val intWidth = dinWidth - fracWidth
+  val intWidth = dinWidth - fracWidth // 当为mac运算时，intWidth为3bit; 当仅为乘或仅为加时，intWidth为2bit
 
   val io = IO(new Bundle {
     val fix_frac = Input(UInt(dinWidth.W))
@@ -257,20 +257,46 @@ class fix2fp(cfg:FPConfig, dinWidth:Int=24, fracWidth:Int=21, addFunc:Int=0) ext
   // 当为00或者01时，整数部分的0不应该参与前导0检测，所以减去前导零的结果后，需要+1；
   // 当为10或者11时，尾数部分需要右移1bit，指数部分本来就需要+1；
   // 所以后续默认尾数部分只有1bit整数位
-  val exp_all_wire = fix_exp - lzdCount.asUInt + 1.U// 这里没有进行位宽扩展，结果的位宽和fix_exp相同，即7bit有符号数，表示范围为-64 ~ +63
+  val exp_all_wire = Wire(UInt((cfg.expBits+2).W))
+  exp_all_wire := fix_exp - lzdCount + intWidth.U - 1.U// 这里没有进行位宽扩展，结果的位宽和fix_exp相同，即7bit有符号数，表示范围为-64 ~ +63；
   dontTouch(exp_all_wire)
-  val exp_all_wire_msb = exp_all_wire(cfg.expBits+2-1) // 取最高bit位，表示符号
-  val exp_all = RegNext(Mux(exp_all_wire_msb, 0.U, exp_all_wire(cfg.expBits+2-2,0))) // 如果最高bit位为1,表示负数，即指数部分不够lzd的大小，指数部分最多变为0；
-
-  // 2. 尾数部分需要左移lzd的结果
-  // 当exp_all_wire小于0时，表示指数部分不够lzd的大小；如果 lzdCount小于exp_all_abs，则表示 fix_exp 在减去 lzdCount之前，就已经是负数了；为了让指数部分至少为非负数，尾数部分需要右移
+  val exp_all_wire_msb = exp_all_wire(cfg.expBits+2-1) // 取最高bit位，表示正负性
   val exp_all_abs = (~exp_all_wire + 1.U)(cfg.expBits+2-2,0) // 取反加一，得到绝对值, 因为最小值为-BIAS-22，=-27，最大值为30+30+1=61，所以这里绝对值只需要6bit无符号整数
   dontTouch(exp_all_abs)
-  val frac_right_shift = exp_all_wire_msb && (lzdCount.asUInt < exp_all_abs) // 当exp_all_wire为负数，并且负的比lzdCount还多，说明 fix_exp 在减去 lzdCount 之前，就已经是负数了
+  // 上溢：exp_all_wire 为正数，并且其值大于等于最大值 (1<<cfg.expBits)-1
+  val isOverflow = ~exp_all_wire_msb && exp_all_wire(exp_all_wire.getWidth-2,0) >= ((1 << cfg.expBits) - 1).U // 如果为正数，并且超过最大值
+  // 下溢：exp_all_wire 为负数，并且负数的绝对值 大于 dinWidth，此时尾数部分不足以让指数部分变为>=0，所以会下溢
+  // 说明一下，当fix_exp>=0时，是不会发生underflow的，因为此时最多对尾数部分不进行左移或者只进行部分左移
+  val isUnderflow = exp_all_wire_msb && (exp_all_abs > dinWidth.U) //如果为负数，并且 绝对值 大于 dinWidth，表明输入的frac会被全部右移移位掉，变成0；则发生了下溢
+  dontTouch(isOverflow)
+  val exp_all = Reg(UInt((cfg.expBits+2).W)) // 扩宽了2bit，最高bit代表正负性，第二高位代表是否大于等于1 << cfg.expBits) - 1
+  //val overflow = Reg(UInt(1.W))
+  //val underflow = Reg(UInt(1.W))
+  //exp_all := RegNext(Mux(exp_all_wire_msb, 0.U, exp_all_wire(cfg.expBits+2-2,0))) // 如果最高bit位为1,表示负数，即指数部分不够lzd的大小，指数部分最多变为0；
+  when(fix_exp===0.U && fracMul_s3(dinWidth-1, dinWidth-1-(intWidth-1))===1.U){ // 因为如果此时fix_exp为0,即代表真实值+BIAS=0,即真实值=-15，而真实值最小只能是-14,所以这里要将字面值设置为1,代表真实值=-14，对应的尾数需要左移1bit，整数位变为1位
+    exp_all := 1.U
+    //overflow := false.B
+    //underflow := false.B
+  } .elsewhen(exp_all_wire_msb){ //考虑 exp_all_wire为负数，如果最高bit位为1,表示负数，即指数部分不够lzd的大小，指数部分最多变为0；
+    exp_all := 0.U
+    //overflow := false.B
+    //when(isUnderflow){ // 如果负数负的太多，会下溢
+    //  underflow := true.B
+    //} .otherwise{
+    //  underflow := false.B
+    //}
+  } .otherwise{ // 考虑exp_all_wire为正数，且没有超过上界的情况
+    exp_all := exp_all_wire
+    //overflow := false.B
+    //underflow := false.B
+  }
+
+  // 2. 尾数部分需要左移lzd 或者 右移的结果
+  val frac_right_shift = exp_all_wire_msb && (lzdCount < exp_all_abs) // 当exp_all_wire为负数，并且负的比lzdCount还多，说明 fix_exp 在减去 lzdCount 之前，就已经是负数了，此时需要将尾数右移
   dontTouch(frac_right_shift)
-  val exp_shift0 = (fix_exp + 1.U)(cfg.expBits-1,0)
+  val exp_shift0 = (fix_exp + intWidth.U - 1.U)(cfg.expBits-1,0) // 代表fix_exp是正数，经过运算之后变成了负数，此时尾数不能左移lzd的大小，而是只能左移exp_shift0位，为什么会有intWidth-1，是为了让尾数的整数部分只包含1bit
   dontTouch(exp_shift0)
-  val exp_shift1 = (~fix_exp)(cfg.expBits,0) // 即exp_shift0的补码； 当fix_exp为负数的时候，尾数需要右移exp_shift1位，并且
+  val exp_shift1 = (~fix_exp - s.U + 2.U)(cfg.expBits,0) // 即exp_shift0的补码； 当fix_exp为负数的时候，尾数需要右移exp_shift1位，并且
   dontTouch(exp_shift1)
   val exp_shift = Mux(exp_all_wire_msb, exp_shift0, lzdCount)(log2Ceil(dinWidth)-1,0) // 当exp_all_wire为负数时(此时不考虑fix_exp+1本来就为负数），表示指数部分不够lzd的大小，最多只能右移exp_shift0位，否则右移lzdCount位
   dontTouch(exp_shift)
@@ -289,7 +315,7 @@ class fix2fp(cfg:FPConfig, dinWidth:Int=24, fracWidth:Int=21, addFunc:Int=0) ext
   }
 
   // 3. 舍入处理
-  val clip = Module(new normal_clip(cfg, frac_all.getWidth))
+  val clip = Module(new normal_clip(cfg, dinWidth+1))
   clip.io.frac_all := frac_all
   clip.io.exp_all := exp_all 
   clip.io.sign_flag := io.sign_flag
@@ -324,7 +350,7 @@ class FPMultiply(cfg: FPConfig) extends Module {
   // stage 1
   val sign_s1 = RegNext(aSign ^ bSign)
   val aExp_s1 = RegNext(aExp + aIsSubnormal.asUInt) // if a is subnormal number, the actual bias is 14, so we add 1 here, later to subtract 15
-  val bExp_s1 = RegNext(bExp + bIsSubnormal.asUInt)
+  val bExp_s1 = RegNext(bExp + bIsSubnormal.asUInt) // 不需要扩位
   val aFrac_s1 = RegNext(Mux(aIsSubnormal, Cat(0.U(1.W), aFrac), Cat(1.U(1.W), aFrac))) // sigBits wide
   val bFrac_s1 = RegNext(Mux(bIsSubnormal, Cat(0.U(1.W), bFrac), Cat(1.U(1.W), bFrac)))	 // sigBits wide
   
@@ -414,31 +440,31 @@ class fp_ma(cfg:FPConfig) extends Module {
     // stage 3
     val sign0_s3 = Reg(UInt(1.W))
     val sign1_s3 = Reg(UInt(1.W))
-    val exp0_s3 = Reg(UInt((cfg.expBits+1).W))
-    val exp1_s3 = Reg(UInt((cfg.expBits+1).W))
+    val exp0_s3 = Reg(UInt((cfg.expBits+2).W))
+    val exp1_s3 = Reg(UInt((cfg.expBits+2).W))
     val frac0_s3 = Reg(UInt((cfg.sigBits*2).W))
     val frac1_s3 = Reg(UInt((cfg.sigBits*2).W))
 
     when(exp_compare){
       sign0_s3 := sign_ab_s2
       sign1_s3 := sign_c_s2
-      exp0_s3 := expAdd_s2 - cfg.bias.U
+      exp0_s3 := expAdd_s2 -& cfg.bias.U
       exp1_s3 := exp_c_s2
-      frac0_s3 := fracMul_s2
-      frac1_s3 := Cat(0.U(1.W), frac_c_s2, 0.U(cfg.fracBits.W))
+      frac0_s3 := fracMul_s2 // 2bit整数位
+      frac1_s3 := Cat(0.U(1.W), frac_c_s2, 0.U(cfg.fracBits.W)) // 补0,对齐变成2bit整数位
     } .otherwise{
       sign0_s3 := sign_c_s2
       sign1_s3 := sign_ab_s2
       exp0_s3 := exp_c_s2
-      exp1_s3 := expAdd_s2 - cfg.bias.U
-      frac0_s3 := Cat(0.U(1.W), frac_c_s2, 0.U(cfg.fracBits.W))
-      frac1_s3 := fracMul_s2
+      exp1_s3 := expAdd_s2 -& cfg.bias.U
+      frac0_s3 := Cat(0.U(1.W), frac_c_s2, 0.U(cfg.fracBits.W)) // 补0,对齐变成2bit整数位
+      frac1_s3 := fracMul_s2 // 2bit整数位
     }
     val exp_sub_s3 = RegNext(exp_sub)
 
     // stage 4
     val frac1_shifted_round = Wire(UInt((cfg.sigBits*2*2).W))
-    val frac1_tmp = Wire(UInt((cfg.sigBits*2+1).W)) // 多1bit，用于保留移掉的位的舍入
+    val frac1_tmp = Wire(UInt((cfg.sigBits*2+1).W)) // 多1bit，用于保留移掉的位的舍入 // 2bit整数位
     
     when(exp_sub_s3 >= (cfg.sigBits*2).U){
       frac1_shifted_round := frac1_s3.orR // 如果移位数大于等于尾数位宽，则表示被移位的数值全部移出，需要对移出的部分进行舍入
@@ -451,18 +477,18 @@ class fp_ma(cfg:FPConfig) extends Module {
     val sign1_s4 = RegNext(sign1_s3)
     val exp0_s4 = RegNext(exp0_s3)
     val exp1_s4 = RegNext(exp1_s3)
-    val frac0_s4 = RegNext( Cat( frac0_s3, 0.U(1.W) ) )
-    val frac1_s4 = RegNext(frac1_tmp)
+    val frac0_s4 = RegNext( Cat( frac0_s3, 0.U(1.W) ) ) // 2bit整数位
+    val frac1_s4 = RegNext(frac1_tmp) // 2bit整数位
 
     // stage 5
     val exp_s5 = RegNext(exp0_s4)
     val sign_s5 = Reg(UInt(1.W))
-    val frac_s5 = Reg(UInt((cfg.sigBits*2+2).W))
+    val frac_s5 = Reg(UInt((cfg.sigBits*2+2).W)) // 3bit 整数位
     // 如果相加的两个数的符号位相同
     when(sign0_s4 === sign1_s4){
       sign_s5 := sign0_s4
-      frac_s5 := frac0_s4 +& frac1_s4
-    } .elsewhen(!sign0_s4.asBool && sign1_s4.asBool){ // 较大的数的符号位sign0为正，sign1为负
+      frac_s5 := frac0_s4 +& frac1_s4 
+    } .elsewhen(!sign0_s4.asBool && sign1_s4.asBool){ // 指数较大的数的符号位——sign0为正，sign1为负
       when(frac0_s4 >= frac1_s4){ // 如果 正数的尾数 >= 负数的尾数
         frac_s5 := frac0_s4 -& frac1_s4
         sign_s5 := 0.U
@@ -470,12 +496,13 @@ class fp_ma(cfg:FPConfig) extends Module {
         frac_s5 := frac1_s4 -& frac0_s4
         sign_s5 := 1.U
       }
-    } .otherwise{ // 较大的数的符号位sign0为负，sign1为正
-      when(frac1_s4 >= frac0_s4){ // 如果 正数的尾数 >= 负数的尾数
+    } .otherwise{ // 指数较大的数的符号位sign0为负，sign1为正
+      when(frac0_s4 >= frac1_s4){ // 如果 负数的尾数 >= 正数的尾数
+        frac_s5 := frac0_s4 -& frac1_s4
+        sign_s5 := Mux(frac0_s4 === frac1_s4, 0.U, 1.U) // 如果相等，结果为正0
+      } .otherwise{ // 如果 正数的尾数 < 负数的尾数
         frac_s5 := frac1_s4 -& frac0_s4
         sign_s5 := 0.U
-      } .otherwise{ // 如果 正数的尾数 < 负数的尾数
-        frac_s5 := frac0_s4 -& frac1_s4
       }
     }
 
