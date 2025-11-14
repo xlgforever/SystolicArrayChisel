@@ -256,9 +256,9 @@ class fix2fp(cfg:FPConfig, dinWidth:Int=24, fracWidth:Int=21, addFunc:Int=0) ext
   // 因为发送给前导零检测模块的输入包含了2bit的整数位，这2bit的情况可能为00, 01, 10, 11；、
   // 当为00或者01时，整数部分的0不应该参与前导0检测，所以减去前导零的结果后，需要+1；
   // 当为10或者11时，尾数部分需要右移1bit，指数部分本来就需要+1；
-  // 所以后续默认尾数部分只有1bit整数位
+  // 所以后续默需要使尾数部分只有1bit整数位
   val exp_all_wire = Wire(UInt((cfg.expBits+2).W))
-  exp_all_wire := fix_exp - lzdCount + intWidth.U - 1.U// 这里没有进行位宽扩展，结果的位宽和fix_exp相同，即7bit有符号数，表示范围为-64 ~ +63；
+  exp_all_wire := fix_exp - (lzdCount - intWidth.U + 1.U)// 这里没有进行位宽扩展，结果的位宽和fix_exp相同，即7bit有符号数，表示范围为-64 ~ +63；
   dontTouch(exp_all_wire)
   val exp_all_wire_msb = exp_all_wire(cfg.expBits+2-1) // 取最高bit位，表示正负性
   val exp_all_abs = (~exp_all_wire + 1.U)(cfg.expBits+2-2,0) // 取反加一，得到绝对值, 因为最小值为-BIAS-22，=-27，最大值为30+30+1=61，所以这里绝对值只需要6bit无符号整数
@@ -273,8 +273,8 @@ class fix2fp(cfg:FPConfig, dinWidth:Int=24, fracWidth:Int=21, addFunc:Int=0) ext
   //val overflow = Reg(UInt(1.W))
   //val underflow = Reg(UInt(1.W))
   //exp_all := RegNext(Mux(exp_all_wire_msb, 0.U, exp_all_wire(cfg.expBits+2-2,0))) // 如果最高bit位为1,表示负数，即指数部分不够lzd的大小，指数部分最多变为0；
-  when(fix_exp===0.U && fracMul_s3(dinWidth-1, dinWidth-1-(intWidth-1))===1.U){ // 因为如果此时fix_exp为0,即代表真实值+BIAS=0,即真实值=-15，而真实值最小只能是-14,所以这里要将字面值设置为1,代表真实值=-14，对应的尾数需要左移1bit，整数位变为1位
-    exp_all := 1.U
+  when(fix_exp===0.U && (lzdCount - intWidth.U + 1.U) === 0.U){ // 因为如果此时fix_exp为0,即代表真实值+BIAS=0,即真实值=-15，而真实值最小只能是-14,所以这里要将字面值设置为1,代表真实值=-14，对应的尾数需要左移1bit，整数位变为1位
+    exp_all := (intWidth-1).U
     //overflow := false.B
     //underflow := false.B
   } .elsewhen(exp_all_wire_msb){ //考虑 exp_all_wire为负数，如果最高bit位为1,表示负数，即指数部分不够lzd的大小，指数部分最多变为0；
@@ -308,7 +308,9 @@ class fix2fp(cfg:FPConfig, dinWidth:Int=24, fracWidth:Int=21, addFunc:Int=0) ext
   frac_right_shift1_sticky := ( fracMul_s3 << ((cfg.sigBits*2).U-exp_shift1)  ).orR // 对移掉的部分进行舍入操作
   // 当 fix_exp+1 本身不是负数时，尾数需要左移exp_shift位
   val frac_left_shifted = (Cat(fracMul_s3, 0.U(1.W)) << exp_shift)(cfg.sigBits*2+1-1, 0) // 低位补0不影响结果，只是为了位宽一致，就像是在10进制小数最后补0一样
-  when(frac_right_shift){
+  when(fix_exp===0.U && (lzdCount - intWidth.U + 1.U) === 0.U){
+    frac_all := Cat(fracMul_s3, 0.U(1.W)) << 
+  } .elsewhen(frac_right_shift){
     frac_all := Cat(frac_right_shift1, frac_right_shift1_sticky)
   } .otherwise{
     frac_all := frac_left_shifted
