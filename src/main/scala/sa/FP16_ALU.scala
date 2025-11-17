@@ -296,7 +296,7 @@ class fix2fp(cfg:FPConfig, dinWidth:Int=24, fracWidth:Int=21, addFunc:Int=0) ext
   dontTouch(frac_right_shift)
   val exp_shift0 = (fix_exp + intWidth.U - 1.U)(cfg.expBits-1,0) // 代表fix_exp是正数，经过运算之后变成了负数，此时尾数不能左移lzd的大小，而是只能左移exp_shift0位，为什么会有intWidth-1，是为了让尾数的整数部分只包含1bit
   dontTouch(exp_shift0)
-  val exp_shift1 = (~fix_exp - s.U + 2.U)(cfg.expBits,0) // 即exp_shift0的补码； 当fix_exp为负数的时候，尾数需要右移exp_shift1位，并且
+  val exp_shift1 = (~fix_exp - intWidth.U + 2.U)(cfg.expBits,0) // 即exp_shift0的补码； 当fix_exp为负数的时候，尾数需要右移exp_shift1位，并且
   dontTouch(exp_shift1)
   val exp_shift = Mux(exp_all_wire_msb, exp_shift0, lzdCount)(log2Ceil(dinWidth)-1,0) // 当exp_all_wire为负数时(此时不考虑fix_exp+1本来就为负数），表示指数部分不够lzd的大小，最多只能右移exp_shift0位，否则右移lzdCount位
   dontTouch(exp_shift)
@@ -308,8 +308,14 @@ class fix2fp(cfg:FPConfig, dinWidth:Int=24, fracWidth:Int=21, addFunc:Int=0) ext
   frac_right_shift1_sticky := ( fracMul_s3 << ((cfg.sigBits*2).U-exp_shift1)  ).orR // 对移掉的部分进行舍入操作
   // 当 fix_exp+1 本身不是负数时，尾数需要左移exp_shift位
   val frac_left_shifted = (Cat(fracMul_s3, 0.U(1.W)) << exp_shift)(cfg.sigBits*2+1-1, 0) // 低位补0不影响结果，只是为了位宽一致，就像是在10进制小数最后补0一样
+  val highestBit = PriorityMux(
+    (0 until intWidth).reverse.map{ i => 
+      ( fracMul_s3(dinWidth-1, dinWidth-1-intWidth+1)(i) -> i.U)
+    }
+  )
+  val shift_special = Mux(fracMul_s3(dinWidth-1, dinWidth-1-intWidth+1).orR, (intWidth-1).U-highestBit, intWidth.U)
   when(fix_exp===0.U && (lzdCount - intWidth.U + 1.U) === 0.U){
-    frac_all := Cat(fracMul_s3, 0.U(1.W)) << 
+    frac_all := Cat(fracMul_s3, 0.U(1.W)) << shift_special
   } .elsewhen(frac_right_shift){
     frac_all := Cat(frac_right_shift1, frac_right_shift1_sticky)
   } .otherwise{
