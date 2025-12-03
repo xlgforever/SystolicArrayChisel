@@ -19,13 +19,13 @@ case class FPConfig(expWidth: Int, fracWidth: Int) {
 }
 
 class specialSignals() extends Bundle {
-  val isNormal = Bool()
-  val isZero = Bool()
-  val isInf = Bool()
-  val isSubnormal = Bool()
-  val isNaN = Bool()
-  val isSignalingNaN = Bool()
-  val isQuietNaN = Bool()
+  val isNormal = Wire(Bool())
+  val isZero = Wire(Bool())
+  val isInf = Wire(Bool())
+  val isSubnormal = Wire(Bool())
+  val isNaN = Wire(Bool())
+  val isSignalingNaN = Wire(Bool())
+  val isQuietNaN = Wire(Bool())
 }
 
 class fpNumber(cfg:FPConfig) extends Bundle {
@@ -232,13 +232,13 @@ class fix2fp(cfg:FPConfig, dinWidth:Int=24, fracWidth:Int=21, addFunc:Int=0) ext
     val fix_frac = Input(UInt(dinWidth.W))
     val fix_exp = Input(UInt((cfg.expBits+2).W))
 
-    //val valid_in = Input(Bool())
+    val valid_in = Input(Bool())
     val sign_flag = Input(UInt(1.W))
     val is_special = Input(Bool())
     val special_result = Input(UInt(cfg.width.W))
 
     val fp_c = Output(UInt(cfg.width.W))
-    //val valid_out = Output(Bool())
+    val valid_out = Output(Bool())
   })
 
 ///////////////////////////////////////////////////////////// stage 3 /////////////////////////////////////////////////////////////////
@@ -330,7 +330,7 @@ class fix2fp(cfg:FPConfig, dinWidth:Int=24, fracWidth:Int=21, addFunc:Int=0) ext
   clip.io.is_special := io.is_special
   clip.io.special_result := io.special_result
   io.fp_c := clip.io.fp_c
-  //io.valid_out := ShiftRegister(io.valid_in, 4)
+  io.valid_out := ShiftRegister(io.valid_in, 4)
 }
 
 
@@ -383,6 +383,7 @@ class FPMultiply(cfg: FPConfig) extends Module {
   fix2fp.io.sign_flag := sign_s1
   fix2fp.io.is_special := isSpecial_s5
   fix2fp.io.special_result := specialResult_s5
+  fix2fp.io.valid_in := DontCare // 这里不需要valid_in，在外部进行打拍
   val fp_c = fix2fp.io.fp_c
 
   io.out := fp_c
@@ -496,7 +497,8 @@ class fp_ma(cfg:FPConfig) extends Module {
     when(sign0_s4 === sign1_s4){
       sign_s5 := sign0_s4
       frac_s5 := frac0_s4 +& frac1_s4 
-    } .elsewhen(!sign0_s4.asBool && sign1_s4.asBool){ // 指数较大的数的符号位——sign0为正，sign1为负
+    //} .elsewhen(!sign0_s4.asBool && sign1_s4.asBool){ // 指数较大的数的符号位——sign0为正，sign1为负
+    } .elsewhen(sign0_s4===0.U && sign1_s4===1.U){ // 指数较大的数的符号位——sign0为正，sign1为负
       when(frac0_s4 >= frac1_s4){ // 如果 正数的尾数 >= 负数的尾数
         frac_s5 := frac0_s4 -& frac1_s4
         sign_s5 := 0.U
@@ -521,12 +523,35 @@ class fp_ma(cfg:FPConfig) extends Module {
 
     // stage 6 ~ stage 9
     val fix2fp = Module(new fix2fp(cfg, cfg.sigBits*2+2, cfg.fracBits*2, 1))
+    /**
+      *   val io = IO(new Bundle {
+    val fix_frac = Input(UInt(dinWidth.W))
+    val fix_exp = Input(UInt((cfg.expBits+2).W))
+
+    //val valid_in = Input(Bool())
+    val sign_flag = Input(UInt(1.W))
+    val is_special = Input(Bool())
+    val special_result = Input(UInt(cfg.width.W))
+
+    val fp_c = Output(UInt(cfg.width.W))
+    //val valid_out = Output(Bool())
+  })
+      */
+    fix2fp.io.fix_frac := frac_s5
+    fix2fp.io.fix_exp := exp_s5
+    fix2fp.io.sign_flag := sign_s8
+    fix2fp.io.is_special := isSpecial_s8
+    fix2fp.io.special_result := specialResult_s8
+    fix2fp.io.valid_in := valid_s5
+    io.d := fix2fp.io.fp_c
+    io.valid_out := fix2fp.io.valid_out // valid_out在fix2fp中已经打拍了
+
 } 
 
-object FPMultiply extends App {
+object fp_ma extends App {
   val cfg = FPConfig(5, 10)
   ChiselStage.emitSystemVerilogFile(
-    new FPMultiply(cfg),
+    new fp_ma(cfg),
     firtoolOpts = Array("-disable-all-randomization", "-strip-debug-info", "-default-layer-specialization=enable")
   )
 }
