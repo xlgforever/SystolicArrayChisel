@@ -1,10 +1,14 @@
 ../LZD_6.sv
 ../LZD_2.sv
+../fp_ma.sv
+../Transpose.sv
 ../sim/define.sv
+../sim/tx_sys.sv
 ../sim/tb.sv
 ../fix2fp.sv
 ../LZD_30.sv
 ../LZD.sv
+../PE.sv
 ../normal_clip.sv
 ../FPMultiply.sv
 ../LZD_Wrapper.sv
@@ -13,3 +17,4 @@
 ./dump.v
 ./clk_gen.v
 ./rst_gen.v
+./tx_sys.sv

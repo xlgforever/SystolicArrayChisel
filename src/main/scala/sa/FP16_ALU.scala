@@ -336,7 +336,7 @@ class fix2fp(cfg:FPConfig, dinWidth:Int=24, fracWidth:Int=21, addFunc:Int=0) ext
 
 //@chiselName
 class FPMultiply(cfg: FPConfig) extends Module {
-  val io = IO(new Bundle {
+  val io = FlatIO(new Bundle {
     val a = Input(UInt(cfg.width.W))
     val b = Input(UInt(cfg.width.W))
     val valid_in = Input(Bool())
@@ -392,7 +392,7 @@ class FPMultiply(cfg: FPConfig) extends Module {
 }
 
 class fp_ma(cfg:FPConfig) extends Module {
-  val io = IO(new Bundle {
+  val io = FlatIO(new Bundle {
     val a = Input(UInt(cfg.width.W))
     val b = Input(UInt(cfg.width.W))
     val c = Input(UInt(cfg.width.W))
@@ -421,8 +421,9 @@ class fp_ma(cfg:FPConfig) extends Module {
     )
 
     val (isSpecial, specialResult) = FPHelpers.specialResultGen2(cfg, 2, fpNumArray, specialSignalsArray)
+    dontTouch(isSpecial)
+    dontTouch(specialResult)
     
-
     // stage 1
     val sign_ab_s1 = RegNext(sign_a ^ sign_b)
     val sign_c_s1 = RegNext(sign_c)
@@ -443,8 +444,11 @@ class fp_ma(cfg:FPConfig) extends Module {
 
     // compare the exp
     val exp_compare = expAdd_s2 >= (exp_c_s2 +& cfg.bias.U)
+    dontTouch(exp_compare)
     val exp_same = expAdd_s2 === (exp_c_s2 +& cfg.bias.U)
+    dontTouch(exp_same)
     val exp_sub = Mux(exp_same, 0.U, Mux(exp_compare, expAdd_s2 -& (exp_c_s2 +& cfg.bias.U), (exp_c_s2 +& cfg.bias.U) -& expAdd_s2))(cfg.expBits+1-1,0)
+    dontTouch(exp_sub)
     
     // stage 3
     val sign0_s3 = Reg(UInt(1.W))
@@ -522,7 +526,7 @@ class fp_ma(cfg:FPConfig) extends Module {
     val specialResult_s8 = ShiftRegister(specialResult, 8)
 
     // stage 6 ~ stage 9
-    val fix2fp = Module(new fix2fp(cfg, cfg.sigBits*2+2, cfg.fracBits*2, 1))
+    val fix2fp = Module(new fix2fp(cfg, cfg.sigBits*2+2, cfg.fracBits*2+1, 1))
     /**
       *   val io = IO(new Bundle {
     val fix_frac = Input(UInt(dinWidth.W))

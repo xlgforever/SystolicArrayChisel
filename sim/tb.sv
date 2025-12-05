@@ -2,16 +2,18 @@ module tb();
 
     wire rst;
     wire clk;
+    localparam WIDTH = 16;
 /*autowire*/
 // Beginning of automatic wires (for undeclared instantiated-module outputs)
-wire [15:0]		io_out;			// From u_FPMultiply of FPMultiply.v
-wire			io_valid_out;		// From u_FPMultiply of FPMultiply.v
+wire [15:0]		d;			// From u_fp_ma of fp_ma.v
+wire			valid_out;		// From u_fp_ma of fp_ma.v
 // End of automatics
 /*autoreginput*/
 // Beginning of automatic reg inputs (for undeclared instantiated-module inputs)
-reg [15:0]		io_a;			// To u_FPMultiply of FPMultiply.v
-reg [15:0]		io_b;			// To u_FPMultiply of FPMultiply.v
-reg			io_valid_in;		// To u_FPMultiply of FPMultiply.v
+reg [15:0]		a;			// To u_fp_ma of fp_ma.v
+reg [15:0]		b;			// To u_fp_ma of fp_ma.v
+reg [15:0]		c;			// To u_fp_ma of fp_ma.v
+reg			valid_in;		// To u_fp_ma of fp_ma.v
 // End of automatics
 
 //LZD_Wrapper u_lzd(
@@ -22,22 +24,23 @@ reg			io_valid_in;		// To u_FPMultiply of FPMultiply.v
 //  .allZero(allZero)
 //);
 
-/* FPMultiply AUTO_TEMPLATE (
+/* fp_ma AUTO_TEMPLATE (
    .clock(clk),
    .reset(rst),
 );
 */
 
-FPMultiply u_FPMultiply(/*autoinst*/
-			// Outputs
-			.io_out		(io_out[15:0]),
-			.io_valid_out	(io_valid_out),
-			// Inputs
-			.clock		(clk),			 // Templated
-			.reset		(rst),			 // Templated
-			.io_a		(io_a[15:0]),
-			.io_b		(io_b[15:0]),
-			.io_valid_in	(io_valid_in));
+fp_ma u_fp_ma(/*autoinst*/
+	      // Outputs
+	      .d			(d[15:0]),
+	      .valid_out		(valid_out),
+	      // Inputs
+	      .clock			(clk),			 // Templated
+	      .reset			(rst),			 // Templated
+	      .a			(a[15:0]),
+	      .b			(b[15:0]),
+	      .c			(c[15:0]),
+	      .valid_in			(valid_in));
 
 
   clk_gen u_clk_gen (
@@ -48,22 +51,51 @@ FPMultiply u_FPMultiply(/*autoinst*/
 		     // Outputs
 		     .rst_n		(),
 		     .rst_p		(rst));
+  /* tx_sys AUTO_TEMPLATE(
+  .clk(clk),
+  .reset(rst),
+  .fp16_a(a[]),
+  .fp16_b(b[]),
+  .fp16_c(c[]),
+  .in_valid(valid_in),
+  .fp16_d(d[]),
+  .out_valid(valid_out),
+  );
+  */
+// tx_sys u_tx_sys(/*autoinst*/
+//		 // Outputs
+//		 .fp16_a		(a[WIDTH-1:0]),
+//		 .fp16_b		(b[WIDTH-1:0]),
+//		 .fp16_c		(c[WIDTH-1:0]),
+//		 .in_valid		(valid_in),
+//		 // Inputs
+//		 .clk			(clk),
+//		 .reset			(rst),
+//		 .fp16_d		(d[WIDTH-1:0]),
+//		 .out_valid		(valid_out));
 
+ 
+ 
 initial begin
-    io_a = 'd0;
-    io_b = 'd0;
-    io_valid_in = 'd0;
+    a = 'd0;
+    b = 'd0;
+    c = 'd0;
+    valid_in = 'd0;
     wait(~rst);
     @(posedge clk);
-    io_a = 16'h3e00;
-    io_b = 16'h3e00;
-    io_valid_in = 'd1;
-    wait(io_valid_out);
+    a = 16'h3909;
+    b = 16'h9e13;
+    c = 16'h3546;
+    valid_in = 'd1;
+    wait(valid_out);
     @(posedge clk);
-    io_valid_in = 'd0;
+    valid_in = 'd0;
     $finish;
 end
+
 dump u_dump();
+
+
 endmodule
 
 
