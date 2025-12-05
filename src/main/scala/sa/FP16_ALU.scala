@@ -194,10 +194,11 @@ class normal_clip(cfg:FPConfig, fracWidth:Int) extends Module {
   })
    //舍入处理
   // 1. 当exp_all不全为0时，说明不是subnomal，此时frac_all需要左移1bit来去掉隐藏的1；如果exp_all是全0,则frac_all不需要左移，因为没有隐藏的1；
-  val final_frac = Wire(UInt((cfg.sigBits * 2 + 1).W))
+  val final_frac = Wire(UInt((fracWidth).W))
   final_frac := Mux(io.exp_all.orR, io.frac_all << 1.U, io.frac_all)
   // 2. 当包含整数部分的frac_all不为全0时，指数部分不变；当包含整数部分的frac_all全为0时，指数部分也要为0，表示结果为0
-  val final_exp = Mux(io.frac_all.orR, io.exp_all, 0.U)
+  val final_exp = Wire(UInt((cfg.expBits+1).W))
+  final_exp := Mux(io.frac_all.orR, io.exp_all, 0.U)
   dontTouch(final_exp)
   // 3. 预处理，在本阶段，指数部分不用动，尾数部分位宽为cfg.fracBits+2位，其中低两bit用于舍入，判断舍掉的部分与0.5的关系
   val pre_round_frac = Wire(UInt((cfg.fracBits + 2).W))
@@ -258,7 +259,7 @@ class fix2fp(cfg:FPConfig, dinWidth:Int=24, fracWidth:Int=21, addFunc:Int=0) ext
   // 当为10或者11时，尾数部分需要右移1bit，指数部分本来就需要+1；
   // 所以后续默需要使尾数部分只有1bit整数位
   val exp_all_wire = Wire(UInt((cfg.expBits+2).W))
-  exp_all_wire := fix_exp - (lzdCount - intWidth.U + 1.U)// 这里没有进行位宽扩展，结果的位宽和fix_exp相同，即7bit有符号数，表示范围为-64 ~ +63；
+  exp_all_wire := fix_exp - lzdCount + intWidth.U - 1.U// 这里没有进行位宽扩展，结果的位宽和fix_exp相同，即7bit有符号数，表示范围为-64 ~ +63；
   dontTouch(exp_all_wire)
   val exp_all_wire_msb = exp_all_wire(cfg.expBits+2-1) // 取最高bit位，表示正负性
   val exp_all_abs = (~exp_all_wire + 1.U)(cfg.expBits+2-2,0) // 取反加一，得到绝对值, 因为最小值为-BIAS-22，=-27，最大值为30+30+1=61，所以这里绝对值只需要6bit无符号整数
@@ -300,14 +301,17 @@ class fix2fp(cfg:FPConfig, dinWidth:Int=24, fracWidth:Int=21, addFunc:Int=0) ext
   dontTouch(exp_shift1)
   val exp_shift = Mux(exp_all_wire_msb, exp_shift0, lzdCount)(log2Ceil(dinWidth)-1,0) // 当exp_all_wire为负数时(此时不考虑fix_exp+1本来就为负数），表示指数部分不够lzd的大小，最多只能右移exp_shift0位，否则右移lzdCount位
   dontTouch(exp_shift)
-  val frac_all = Reg(UInt((cfg.sigBits * 2+1).W)) // 23 bits，多一位是为了后续的舍入
+  val frac_all = Reg(UInt((dinWidth+1).W)) // 23 bits，多一位是为了后续的舍入
   // 当fix_exp+1本身就是负数时，尾数需要右移exp_shift1 位，并且需要对移掉的部分进行舍入操作
   val frac_right_shift1 = Wire(UInt((cfg.sigBits * 2).W))
   val frac_right_shift1_sticky = Wire(UInt(1.W))
   frac_right_shift1 := fracMul_s3 >> exp_shift1
+  dontTouch(frac_right_shift1)
   frac_right_shift1_sticky := ( fracMul_s3 << ((cfg.sigBits*2).U-exp_shift1)  ).orR // 对移掉的部分进行舍入操作
+  dontTouch(frac_right_shift1_sticky)
   // 当 fix_exp+1 本身不是负数时，尾数需要左移exp_shift位
-  val frac_left_shifted = (Cat(fracMul_s3, 0.U(1.W)) << exp_shift)(cfg.sigBits*2+1-1, 0) // 低位补0不影响结果，只是为了位宽一致，就像是在10进制小数最后补0一样
+  val frac_left_shifted = (Cat(fracMul_s3, 0.U(1.W)) << exp_shift)(dinWidth, 0) // 低位补0不影响结果，只是为了位宽一致，就像是在10进制小数最后补0一样
+  dontTouch(frac_left_shifted)
   val highestBit = PriorityMux(
     (0 until intWidth).reverse.map{ i => 
       ( fracMul_s3(dinWidth-1, dinWidth-1-intWidth+1)(i) -> i.U)

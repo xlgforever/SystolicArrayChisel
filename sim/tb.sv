@@ -5,16 +5,14 @@ module tb();
     localparam WIDTH = 16;
 /*autowire*/
 // Beginning of automatic wires (for undeclared instantiated-module outputs)
+wire [WIDTH-1:0]	a;			// From u_tx_sys of tx_sys.v
+wire [WIDTH-1:0]	b;			// From u_tx_sys of tx_sys.v
+wire [WIDTH-1:0]	c;			// From u_tx_sys of tx_sys.v
 wire [15:0]		d;			// From u_fp_ma of fp_ma.v
+wire			valid_in;		// From u_tx_sys of tx_sys.v
 wire			valid_out;		// From u_fp_ma of fp_ma.v
 // End of automatics
 /*autoreginput*/
-// Beginning of automatic reg inputs (for undeclared instantiated-module inputs)
-reg [15:0]		a;			// To u_fp_ma of fp_ma.v
-reg [15:0]		b;			// To u_fp_ma of fp_ma.v
-reg [15:0]		c;			// To u_fp_ma of fp_ma.v
-reg			valid_in;		// To u_fp_ma of fp_ma.v
-// End of automatics
 
 //LZD_Wrapper u_lzd(
 //  .clock(clk),
@@ -62,36 +60,35 @@ fp_ma u_fp_ma(/*autoinst*/
   .out_valid(valid_out),
   );
   */
-// tx_sys u_tx_sys(/*autoinst*/
-//		 // Outputs
-//		 .fp16_a		(a[WIDTH-1:0]),
-//		 .fp16_b		(b[WIDTH-1:0]),
-//		 .fp16_c		(c[WIDTH-1:0]),
-//		 .in_valid		(valid_in),
-//		 // Inputs
-//		 .clk			(clk),
-//		 .reset			(rst),
-//		 .fp16_d		(d[WIDTH-1:0]),
-//		 .out_valid		(valid_out));
+ tx_sys u_tx_sys(/*autoinst*/
+		 // Outputs
+		 .fp16_a		(a[WIDTH-1:0]),		 // Templated
+		 .fp16_b		(b[WIDTH-1:0]),		 // Templated
+		 .fp16_c		(c[WIDTH-1:0]),		 // Templated
+		 .in_valid		(valid_in),		 // Templated
+		 // Inputs
+		 .clk			(clk),			 // Templated
+		 .reset			(rst),			 // Templated
+		 .fp16_d		(d[WIDTH-1:0]),		 // Templated
+		 .out_valid		(valid_out));		 // Templated
 
- 
- 
-initial begin
-    a = 'd0;
-    b = 'd0;
-    c = 'd0;
-    valid_in = 'd0;
-    wait(~rst);
-    @(posedge clk);
-    a = 16'h3909;
-    b = 16'h9e13;
-    c = 16'h3546;
-    valid_in = 'd1;
-    wait(valid_out);
-    @(posedge clk);
-    valid_in = 'd0;
-    $finish;
-end
+// cda2 4aad d2a4 dd88
+//initial begin
+//    a = 'd0;
+//    b = 'd0;
+//    c = 'd0;
+//    valid_in = 'd0;
+//    wait(~rst);
+//    @(posedge clk);
+//    a = 16'hcda2;
+//    b = 16'h4aad;
+//    c = 16'hd2a4;
+//    valid_in = 'd1;
+//    wait(valid_out);
+//    @(posedge clk);
+//    valid_in = 'd0;
+//    $finish;
+//end
 
 dump u_dump();
 

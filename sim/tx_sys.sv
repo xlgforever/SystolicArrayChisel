@@ -142,11 +142,5 @@ begin
 	end
 end
 
-initial begin
-    wait(icnt=='d1);
-    repeat (9) @(posedge clk);
-    $finish;
-end
-
 endmodule
 
