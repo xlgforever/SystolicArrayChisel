@@ -61,8 +61,8 @@ class Transpose(rows:Int, dataWidth: Int) extends Module {
 class SystolicDelayForInput(cfg: PEConfig, rows:Int=32) extends Module {
 	val columns = rows
   val io = FlatIO(new Bundle {
-	val sdtIn = Input(Vec(rows, new PEInBundle(cfg)))
-	val sdtOut = Output(Vec(rows, new PEInBundle(cfg)))
+	val sdtIn = Input(Vec(rows, new PESubBundle(cfg)))
+	val sdtOut = Output(Vec(rows, new PESubBundle(cfg)))
   })
 	val a_delay = Module(new SystolicDelay(rows, cfg.PEInWidth, cfg.PEMACDelay+1, false))
 	val b_delay = Module(new SystolicDelay(rows, cfg.PEOutWidth, 1, false))
@@ -72,17 +72,17 @@ class SystolicDelayForInput(cfg: PEConfig, rows:Int=32) extends Module {
 	val valid_delay = Module (new SystolicDelay(rows, 1, 1, false))
 	val propagate_delay = Module (new SystolicDelay(rows, 1, 1, false))
 
-	a_delay.io.dataIn := VecInit(io.sdtIn.map(_.PE_a_in))
-	b_delay.io.dataIn := VecInit(io.sdtIn.map(_.PE_b_in))
-	d_delay.io.dataIn := VecInit(io.sdtIn.map(_.PE_d_in))
-	last_delay.io.dataIn := VecInit(io.sdtIn.map(_.PE_last_in.asTypeOf(UInt(1.W))))
+	a_delay.io.dataIn := VecInit(io.sdtIn.map(_.PE_a))
+	b_delay.io.dataIn := VecInit(io.sdtIn.map(_.PE_b))
+	d_delay.io.dataIn := VecInit(io.sdtIn.map(_.PE_cd))
+	last_delay.io.dataIn := VecInit(io.sdtIn.map(_.PE_last.asTypeOf(UInt(1.W))))
 
 	//输出
 	for (i <- 0 until rows) {
-		io.sdtOut(i).PE_a_in := a_delay.io.dataOut(i)
-		io.sdtOut(i).PE_b_in := b_delay.io.dataOut(i)
-		io.sdtOut(i).PE_d_in := d_delay.io.dataOut(i)
-		io.sdtOut(i).PE_last_in := last_delay.io.dataOut(i).asTypeOf(new PEInBundle(cfg).PE_last_in)
+		io.sdtOut(i).PE_a := a_delay.io.dataOut(i)
+		io.sdtOut(i).PE_b := b_delay.io.dataOut(i)
+		io.sdtOut(i).PE_cd := d_delay.io.dataOut(i)
+		io.sdtOut(i).PE_last := last_delay.io.dataOut(i).asTypeOf(new PESubBundle(cfg).PE_last)
 	}
 }
 
