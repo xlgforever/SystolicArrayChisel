@@ -76,6 +76,8 @@ class SystolicDelayForInput(cfg: PEConfig, rows:Int=32) extends Module {
 	b_delay.io.dataIn := VecInit(io.sdtIn.map(_.PE_b))
 	d_delay.io.dataIn := VecInit(io.sdtIn.map(_.PE_cd))
 	last_delay.io.dataIn := VecInit(io.sdtIn.map(_.PE_last.asTypeOf(UInt(1.W))))
+	valid_delay.io.dataIn := VecInit(io.sdtIn.map(_.PE_valid.asTypeOf(UInt(1.W))))
+	propagate_delay.io.dataIn := VecInit(io.sdtIn.map(_.PE_propagate.asTypeOf(UInt(1.W))))
 
 	//输出
 	for (i <- 0 until rows) {
@@ -83,6 +85,8 @@ class SystolicDelayForInput(cfg: PEConfig, rows:Int=32) extends Module {
 		io.sdtOut(i).PE_b := b_delay.io.dataOut(i)
 		io.sdtOut(i).PE_cd := d_delay.io.dataOut(i)
 		io.sdtOut(i).PE_last := last_delay.io.dataOut(i).asTypeOf(new PESubBundle(cfg).PE_last)
+		io.sdtOut(i).PE_valid := valid_delay.io.dataOut(i).asTypeOf(new PESubBundle(cfg).PE_valid)
+		io.sdtOut(i).PE_propagate := propagate_delay.io.dataOut(i).asTypeOf(new PESubBundle(cfg).PE_propagate)
 	}
 }
 

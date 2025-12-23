@@ -144,10 +144,28 @@ class Tile(cfg:PEConfig, rows:Int=32) extends Module{
 	
 }
 
-object Tile extends App {
+class TileTop(cfg:PEConfig, rows:Int=32) extends Module {
+	val io = FlatIO(new Bundle {
+		val tileIn = Input(Vec(rows, new PESubBundle(cfg)))
+		val dataOut = Output(Vec(rows, UInt(cfg.PEOutWidth.W)))
+		val validOut = Output(Bool())
+	})
+	val inputDelay = Module (new SystolicDelayForInput(cfg, rows))
+	val tile = Module(new Tile(cfg, rows))
+	val outputDelay = Module (new SystolicDelayForOutput(cfg, rows))
+
+	inputDelay.io.sdtIn := io.tileIn
+	tile.io.tileIn := inputDelay.io.sdtOut
+	outputDelay.io.dataIn := VecInit(tile.io.tileOut.map(_.PE_b))
+	outputDelay.io.validIn := VecInit(tile.io.tileOut.map(_.PE_valid))
+	io.dataOut := outputDelay.io.dataOut
+	io.validOut := outputDelay.io.validOut
+}
+
+object TileTop extends App {
   val cfg =  PEConfig(5, 10)
   ChiselStage.emitSystemVerilogFile(
-    new Tile(cfg, 32),
+    new TileTop(cfg, 32),
     firtoolOpts = Array("-disable-all-randomization", "-strip-debug-info", "-default-layer-specialization=enable")
   )
 }
